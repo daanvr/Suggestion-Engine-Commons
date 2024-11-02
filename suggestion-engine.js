@@ -587,57 +587,52 @@ class SuggestionEngine {
 
     addSubject(container, subject) {
         try {
-            // Find the statement widget element
-            const statementWidgetElement = container.querySelector('.mwe-upwiz-statementWidget');
+            // Find the statement input widget
+            const statementWidgetElement = container.querySelector('.wbmi-statement-input');
             if (!statementWidgetElement) {
                 console.error('Statement widget element not found');
                 return;
             }
     
-            // Infuse the OOUI widget instance from the element
-            const statementWidget = OO.ui.infuse(statementWidgetElement);
-            if (!statementWidget) {
-                console.error('Statement widget instance not found');
+            // Find the input widget element
+            const inputWidgetElement = statementWidgetElement.querySelector('.wbmi-input-widget');
+            if (!inputWidgetElement) {
+                console.error('Input widget element not found');
                 return;
             }
     
-            // Access the input widget inside the statement widget
-            const inputWidget = statementWidget.valueInput;
+            // Infuse the OOUI widget instance from the element
+            const inputWidget = OO.ui.infuse(inputWidgetElement);
             if (!inputWidget) {
-                console.error('Input widget not found in statement widget');
+                console.error('Input widget instance not found');
+                return;
+            }
+    
+            // Access the controller
+            const controller = inputWidget.controller;
+            if (!controller) {
+                console.error('Controller not found in input widget');
                 return;
             }
     
             // Check if the subject is already added
-            const existingItems = statementWidget.items.map(item => item.value.id);
-            if (existingItems.includes(subject.id)) {
+            const existingEntities = controller.getEntities();
+            if (existingEntities.some(entity => entity.getId() === subject.id)) {
                 console.log('Subject already added:', subject.label);
                 return;
             }
     
-            // Simulate typing the subject label
-            inputWidget.setValue(subject.label);
+            // Create a new entity model
+            const entityModel = new wbmi.model.entity.Entity({
+                id: subject.id,
+                labels: { en: subject.label },
+                descriptions: { en: subject.description }
+            });
     
-            // Wait for the lookup menu to populate
-            setTimeout(() => {
-                const menu = inputWidget.lookupMenu;
-                if (menu && menu.items.length > 0) {
-                    // Find the item with matching ID
-                    const menuItem = menu.items.find(item => item.data.id === subject.id);
-                    if (menuItem) {
-                        menu.selectItem(menuItem);
-                        inputWidget.onLookupMenuItemChoose(menuItem);
-                        this.showMessage(container, 'success', `Added subject: ${subject.label}`);
-                    } else {
-                        console.error('Subject not found in lookup menu');
-                        this.showMessage(container, 'error', `Subject "${subject.label}" not found in lookup menu`);
-                    }
-                } else {
-                    console.error('Lookup menu is empty');
-                    this.showMessage(container, 'error', 'Lookup menu is empty or still loading');
-                }
-            }, 500);
+            // Add the entity to the controller
+            controller.addEntities([entityModel]);
     
+            this.showMessage(container, 'success', `Added subject: ${subject.label}`);
         } catch (error) {
             console.error('Failed to add subject:', error);
             this.showMessage(container, 'error', 'Failed to add subject. Please try again.');
