@@ -29,18 +29,16 @@ const CONFIG = {
     // API and Performance
     NEARBY_FILES_LIMIT: 50,       // Number of nearby files to analyze
     RETRY_COOLDOWN: 3000,         // Milliseconds to wait before allowing retry
-    SUGGESTION_RADIUS: 5000,      // Radius in meters for nearby file search
+    SUGGESTION_RADIUS: 10000,      // Radius in meters for nearby file search
     API_TIMEOUT: 10000,           // Milliseconds before timing out API calls
 };
 
-/* 
- * Version History
- * 0.1.0 - Initial release
- * - Location-based category suggestions
- * - Distance and frequency display
+/* Version History
+ * 0.2.0 - Added main subject suggestions
+ * 0.1.0 - Initial release with category suggestions
  */
 
-class CategorySuggester {
+class SuggestionEngine {
     constructor() {
         this.api = new mw.Api();
         this.initialized = false;
@@ -52,10 +50,12 @@ class CategorySuggester {
         try {
             await mw.loader.using(['mediawiki.api', 'oojs-ui']);
             await this.waitForElement('.mwe-upwiz-categoriesDetailsWidget');
+            await this.waitForElement('.wbmi-statement-input');
             this.attachToDetailsPanel();
+            this.attachToSubjectsPanel();
             this.initialized = true;
         } catch (error) {
-            console.error('Failed to initialize CategorySuggester:', error);
+            console.error('Failed to initialize SuggestionEngine:', error);
         }
     }
 
@@ -101,32 +101,32 @@ class CategorySuggester {
             
             const boundHandler = async () => {
                 const coordinates = this.getCoordinates(container);
+                console.debug('Subject suggestion coordinates:', coordinates); // Add this line
                 if (!coordinates) {
-                    this.showMessage(container, 'warning', 'Please enter both latitude and longitude to get suggestions.');
+                    this.showMessage(container, 'warning', 'Please enter both latitude and longitude to get subject suggestions.');
                     return;
                 }
-
+            
                 suggestionPanel.innerHTML = '';
                 const progressBar = new OO.ui.ProgressBarWidget({
                     progress: false
                 });
                 suggestionPanel.appendChild(progressBar.$element[0]);
                 suggestionPanel.style.display = 'block';
-
+            
                 try {
                     const [nearbyCategories, frequentCategories] = await Promise.all([
                         this.fetchNearbyCategories(coordinates),
                         this.fetchFrequentCategories(coordinates)
                     ]);
-
+            
                     this.displaySuggestions(container, suggestionPanel, nearbyCategories, frequentCategories);
                 } catch (error) {
-                    console.error('Failed to fetch suggestions:', error);
+                    console.error('Failed to fetch category suggestions:', error);
                     this.showMessage(container, 'error', 'Failed to fetch category suggestions. Please try again.');
                     suggestionPanel.style.display = 'none';
                 }
             };
-
             suggestionButton.on('click', boundHandler);
 
             buttonContainer.appendChild(suggestionButton.$element[0]);
@@ -144,11 +144,17 @@ class CategorySuggester {
     }
 
     getCoordinates(container) {
-        if (!container) return null;
-
+        if (!container) {
+            console.debug('No container found');
+            return null;
+        }
+    
         const locationSection = container.querySelector('.mwe-upwiz-locationDetailsWidget');
-        if (!locationSection) return null;
-
+        if (!locationSection) {
+            console.debug('No location section found');
+            return null;
+        }
+    
         // Find fields by label text
         const fields = Array.from(locationSection.querySelectorAll('.oo-ui-fieldLayout'));
         const latField = fields.find(field => 
@@ -157,27 +163,42 @@ class CategorySuggester {
         const lonField = fields.find(field => 
             field.querySelector('.oo-ui-labelElement-label')?.textContent.trim() === 'Longitude'
         );
-
-        if (!latField || !lonField) return null;
-
+    
+        if (!latField || !lonField) {
+            console.debug('Lat/lon fields not found');
+            return null;
+        }
+    
         const latInput = latField.querySelector('input');
         const lonInput = lonField.querySelector('input');
-
-        if (!latInput || !lonInput) return null;
-
+    
+        if (!latInput || !lonInput) {
+            console.debug('Lat/lon inputs not found');
+            return null;
+        }
+    
         const lat = latInput.value.trim();
         const lon = lonInput.value.trim();
-
-        if (!lat || !lon) return null;
-
+    
+        if (!lat || !lon) {
+            console.debug('No lat/lon values found');
+            return null;
+        }
+    
         const latNum = parseFloat(lat);
         const lonNum = parseFloat(lon);
-
-        if (isNaN(latNum) || isNaN(lonNum)) return null;
-
-        if (latNum < -90 || latNum > 90 || lonNum < -180 || lonNum > 180) return null;
-
-        // Round coordinates to 5 decimal places immediately when reading them
+    
+        if (isNaN(latNum) || isNaN(lonNum)) {
+            console.debug('Invalid lat/lon numbers');
+            return null;
+        }
+    
+        if (latNum < -90 || latNum > 90 || lonNum < -180 || lonNum > 180) {
+            console.debug('Lat/lon out of range');
+            return null;
+        }
+    
+        console.debug('Coordinates found:', { lat: latNum, lon: lonNum });
         return {
             lat: Number(latNum.toFixed(5)),
             lon: Number(lonNum.toFixed(5))
@@ -186,15 +207,17 @@ class CategorySuggester {
 
     async fetchNearbyCategories({ lat, lon }) {
         try {
+            console.debug('Fetching nearby categories for coordinates:', { lat, lon });
             const response = await this.api.get({
                 action: 'query',
                 list: 'geosearch',
                 gsnamespace: 14,
-                gsradius: 5000,
+                gsradius: CONFIG.SUGGESTION_RADIUS,
                 gscoord: `${lat}|${lon}`,
-                gslimit: 10,
+                gslimit: CONFIG.NEARBY_FILES_LIMIT,
                 format: 'json'
             });
+            console.debug('Nearby categories API response:', response);
             return response.query?.geosearch || [];
         } catch (error) {
             console.error('Failed to fetch nearby categories:', error);
@@ -395,17 +418,242 @@ class CategorySuggester {
         container.appendChild(widget.$element[0]);
         setTimeout(() => widget.$element.remove(), 5000);
     }
+
+    async attachToSubjectsPanel() {
+        const subjectWidgets = document.querySelectorAll('.wbmi-statement-input');
+        
+        subjectWidgets.forEach((widget) => {
+            const buttonContainer = document.createElement('div');
+            buttonContainer.style.marginTop = '8px';
+            buttonContainer.style.marginBottom = '8px';
+    
+            const suggestionPanel = document.createElement('div');
+            suggestionPanel.className = 'subject-suggestions-panel';
+            suggestionPanel.style.display = 'none';
+            suggestionPanel.style.marginTop = '8px';
+            suggestionPanel.style.border = '1px solid #a2a9b1';
+            suggestionPanel.style.borderRadius = '2px';
+            suggestionPanel.style.padding = '8px';
+            suggestionPanel.style.backgroundColor = '#f8f9fa';
+    
+            const suggestionButton = new OO.ui.ButtonWidget({
+                label: 'Suggest Subjects',
+                icon: 'search',
+                flags: ['progressive'],
+                framed: true
+            });
+    
+            const container = this.findParentFileContainer(widget);
+            
+            const boundHandler = async () => {
+                const coordinates = this.getCoordinates(container);
+                if (!coordinates) {
+                    this.showMessage(container, 'warning', 'Please enter both latitude and longitude to get subject suggestions.');
+                    return;
+                }
+    
+                suggestionPanel.innerHTML = '';
+                const progressBar = new OO.ui.ProgressBarWidget({
+                    progress: false
+                });
+                suggestionPanel.appendChild(progressBar.$element[0]);
+                suggestionPanel.style.display = 'block';
+    
+                try {
+                    const nearbySubjects = await this.fetchNearbySubjects(coordinates);
+                    this.displaySubjectSuggestions(container, suggestionPanel, nearbySubjects);
+                } catch (error) {
+                    console.error('Failed to fetch subject suggestions:', error);
+                    this.showMessage(container, 'error', 'Failed to fetch subject suggestions. Please try again.');
+                    suggestionPanel.style.display = 'none';
+                }
+            };
+    
+            suggestionButton.on('click', boundHandler);
+    
+            buttonContainer.appendChild(suggestionButton.$element[0]);
+            widget.parentElement.insertBefore(buttonContainer, widget.nextSibling);
+            widget.parentElement.insertBefore(suggestionPanel, buttonContainer.nextSibling);
+        });
+    }
+
+    async fetchNearbySubjects({ lat, lon }) {
+        try {
+            const radius = CONFIG.SUGGESTION_RADIUS / 1000; // Convert meters to kilometers
+            console.log('Fetching nearby Wikidata items for subjects:', { lat, lon });
+    
+            const query = `
+    SELECT ?item ?itemLabel ?itemDescription ?distance WHERE {
+      SERVICE wikibase:around {
+        ?item wdt:P625 ?location .
+        bd:serviceParam wikibase:center "Point(${lon} ${lat})"^^geo:wktLiteral .
+        bd:serviceParam wikibase:radius "${radius}" .
+        bd:serviceParam wikibase:distance ?distance .
+      }
+      SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
+    }
+    ORDER BY ?distance
+    LIMIT 50
+    `;
+            const url = 'https://query.wikidata.org/sparql';
+            const fullUrl = url + '?query=' + encodeURIComponent(query);
+    
+            const response = await fetch(fullUrl, {
+                headers: {
+                    'Accept': 'application/sparql-results+json'
+                }
+            });
+    
+            if (!response.ok) {
+                throw new Error(`SPARQL query failed with status ${response.status}`);
+            }
+    
+            const data = await response.json();
+    
+            const bindings = data.results.bindings;
+    
+            const subjects = bindings.map(binding => ({
+                id: binding.item.value.replace('http://www.wikidata.org/entity/', ''),
+                label: binding.itemLabel?.value || '',
+                description: binding.itemDescription?.value || '',
+                distance: parseFloat(binding.distance.value) // Distance is in kilometers
+            }));
+    
+            return subjects;
+    
+        } catch (error) {
+            console.error('Failed to fetch nearby subjects:', error);
+            return [];
+        }
+    }
+
+    displaySubjectSuggestions(container, panel, subjects) {
+        panel.innerHTML = '';
+        panel.style.display = 'block';
+    
+        if (!subjects.length) {
+            const message = new OO.ui.MessageWidget({
+                type: 'notice',
+                label: 'No subjects found nearby. Try adjusting the coordinates.'
+            });
+            panel.appendChild(message.$element[0]);
+            return;
+        }
+    
+        const list = document.createElement('div');
+        list.style.display = 'flex';
+        list.style.flexDirection = 'column';
+        list.style.gap = '4px';
+    
+        subjects.forEach(subject => {
+            const button = new OO.ui.ButtonWidget({
+                label: `${subject.label} (${subject.distance.toFixed(2)} km)`,
+                framed: false,
+                flags: ['progressive']
+            });
+    
+            // Add tooltip with description if available
+            if (subject.description) {
+                button.$element.attr('title', subject.description);
+            }
+    
+            button.on('click', () => {
+                this.addSubject(container, subject);
+                button.setFlags({ progressive: false, successful: true });
+            });
+    
+            list.appendChild(button.$element[0]);
+        });
+    
+        panel.appendChild(list);
+    
+        // Add close button
+        const closeButton = new OO.ui.ButtonWidget({
+            label: 'Close suggestions',
+            flags: ['destructive'],
+            framed: false
+        });
+    
+        closeButton.on('click', () => {
+            panel.style.display = 'none';
+        });
+    
+        const closeContainer = document.createElement('div');
+        closeContainer.style.marginTop = '8px';
+        closeContainer.style.textAlign = 'right';
+        closeContainer.appendChild(closeButton.$element[0]);
+        panel.appendChild(closeContainer);
+    }
+
+    addSubject(container, subject) {
+        try {
+            // Find the statement widget element
+            const statementWidgetElement = container.querySelector('.mwe-upwiz-statementWidget');
+            if (!statementWidgetElement) {
+                console.error('Statement widget element not found');
+                return;
+            }
+    
+            // Infuse the OOUI widget instance from the element
+            const statementWidget = OO.ui.infuse(statementWidgetElement);
+            if (!statementWidget) {
+                console.error('Statement widget instance not found');
+                return;
+            }
+    
+            // Access the input widget inside the statement widget
+            const inputWidget = statementWidget.valueInput;
+            if (!inputWidget) {
+                console.error('Input widget not found in statement widget');
+                return;
+            }
+    
+            // Check if the subject is already added
+            const existingItems = statementWidget.items.map(item => item.value.id);
+            if (existingItems.includes(subject.id)) {
+                console.log('Subject already added:', subject.label);
+                return;
+            }
+    
+            // Simulate typing the subject label
+            inputWidget.setValue(subject.label);
+    
+            // Wait for the lookup menu to populate
+            setTimeout(() => {
+                const menu = inputWidget.lookupMenu;
+                if (menu && menu.items.length > 0) {
+                    // Find the item with matching ID
+                    const menuItem = menu.items.find(item => item.data.id === subject.id);
+                    if (menuItem) {
+                        menu.selectItem(menuItem);
+                        inputWidget.onLookupMenuItemChoose(menuItem);
+                        this.showMessage(container, 'success', `Added subject: ${subject.label}`);
+                    } else {
+                        console.error('Subject not found in lookup menu');
+                        this.showMessage(container, 'error', `Subject "${subject.label}" not found in lookup menu`);
+                    }
+                } else {
+                    console.error('Lookup menu is empty');
+                    this.showMessage(container, 'error', 'Lookup menu is empty or still loading');
+                }
+            }, 500);
+    
+        } catch (error) {
+            console.error('Failed to add subject:', error);
+            this.showMessage(container, 'error', 'Failed to add subject. Please try again.');
+        }
+    }
 }
 
 // Initialize the suggester
 (() => {
-    const suggester = new CategorySuggester();
+    const engine = new SuggestionEngine();
 
     mw.hook('wikipage.content').add(() => {
-        suggester.init();
+        engine.init();
     });
 
     mw.hook('uploadwizard.fillDestFile').add(() => {
-        suggester.init();
+        engine.init();
     });
 })();
