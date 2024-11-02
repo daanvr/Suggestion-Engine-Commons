@@ -45,7 +45,7 @@ class CategorySuggester {
         this.api = new mw.Api();
         this.initialized = false;
     }
-    
+
     async init() {
         if (this.initialized) return;
 
@@ -177,7 +177,11 @@ class CategorySuggester {
 
         if (latNum < -90 || latNum > 90 || lonNum < -180 || lonNum > 180) return null;
 
-        return { lat: latNum, lon: lonNum };
+        // Round coordinates to 5 decimal places immediately when reading them
+        return {
+            lat: Number(latNum.toFixed(5)),
+            lon: Number(lonNum.toFixed(5))
+        };
     }
 
     async fetchNearbyCategories({ lat, lon }) {
